@@ -75,6 +75,52 @@ if ml_df.empty:
     st.warning("Todavía no hay datos. Corre `python fetch_trends.py` primero.")
     st.stop()
 
+# --- Sección 0: recomendación rápida (cruce de todas las señales) ---
+st.header("0. Qué publicar primero en Facebook Marketplace")
+st.caption(
+    "Cruce directo de las dos señales reales que tenemos: categorías con más demanda "
+    "(Google Trends) y, dentro de cada una, el producto que REALMENTE más vende en "
+    "Mercado Libre (no estimado, es su ranking real). Esto no es una garantía de venta "
+    "en Facebook Marketplace — es el punto de partida más informado que podemos darte "
+    "con fuentes gratuitas. Antes de invertir en stock, valida con la Sección 6 si hay "
+    "una marca/modelo específico en alza dentro de este producto, y con la Sección 3 que "
+    "el interés sea sostenido y no un pico de un solo día."
+)
+
+if not trends_df.empty:
+    demand_by_category = (
+        trends_df.sort_values("captured_at")
+        .groupby("category_name", as_index=False)
+        .last()[["category_name", "interest_score"]]
+        .rename(columns={"interest_score": "demanda"})
+    )
+
+    top1_by_category = (
+        ml_df.sort_values("captured_at")
+        .groupby("product_id", as_index=False)
+        .last()
+        .sort_values(["category_name", "position"])
+        .groupby("category_name", as_index=False)
+        .first()[["category_name", "title", "price", "permalink"]]
+    )
+
+    recommendation = demand_by_category.merge(top1_by_category, on="category_name", how="left")
+    recommendation = recommendation.sort_values("demanda", ascending=False)
+
+    for _, row in recommendation.iterrows():
+        with st.container(border=True):
+            c1, c2 = st.columns([1, 3])
+            c1.metric(row["category_name"], f"{row['demanda']}/100 demanda")
+            if pd.notna(row["title"]):
+                c2.markdown(f"**Producto top en ML:** {row['title']}")
+                c2.markdown(f"${row['price']:,.0f} · [Ver en Mercado Libre]({row['permalink']})")
+            else:
+                c2.markdown("_Sin producto registrado en ML para esta categoría todavía._")
+else:
+    st.info("Corre `python fetch_trends_google.py` para ver esta recomendación.")
+
+st.divider()
+
 # --- Sección 1: comparación de demanda entre categorías (Google Trends) ---
 st.header("1. Qué categoría tiene más demanda")
 st.caption(
