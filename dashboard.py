@@ -12,7 +12,7 @@ import plotly.express as px
 import streamlit as st
 from pytrends.request import TrendReq
 
-from trends_helper import fetch_comparable_interest, fetch_rising_queries
+from trends_helper import CHILE_REGION_COORDS, fetch_comparable_interest, fetch_rising_queries
 
 DB_PATH = "ml_trends.db"
 
@@ -414,5 +414,66 @@ if seed_word and st.button("Ver productos en alza"):
                     "entre palabras distintas) — entre más alto, más rápido está creciendo esa "
                     "búsqueda específica en los últimos 3 meses."
                 )
+        except Exception as e:
+            st.error(f"No se pudo consultar Google Trends: {e}")
+
+st.divider()
+
+# --- Sección 7: mapa de calor por región (Google Trends) ---
+st.header("7. Dónde se busca más una palabra (mapa de Chile)")
+st.caption(
+    "Distribución del interés de búsqueda por región, últimos 12 meses. "
+    "Usamos las capitales regionales como referencia geográfica (Google Trends no "
+    "da coordenadas exactas, solo el nombre de la región), así que el tamaño/color "
+    "de cada punto representa el interés relativo de toda la región, no un barrio "
+    "o ciudad específica."
+)
+
+map_word = st.text_input(
+    "Palabra a mapear", placeholder="ej. zapatillas, freidora de aire", key="map_word"
+)
+
+if map_word and st.button("Ver mapa de calor"):
+    with st.spinner(f"Consultando interés por región para '{map_word}'..."):
+        try:
+            pytrends = TrendReq(hl="es-CL", tz=240)
+            pytrends.build_payload([map_word], geo="CL", timeframe="today 12-m")
+            df_region = pytrends.interest_by_region(resolution="REGION", inc_low_vol=True)
+
+            if df_region.empty or df_region[map_word].sum() == 0:
+                st.warning("Google Trends no devolvió datos por región para esa palabra.")
+            else:
+                df_region = df_region.reset_index()
+                df_region["lat"] = df_region["geoName"].map(lambda r: CHILE_REGION_COORDS.get(r, (None, None))[0])
+                df_region["lon"] = df_region["geoName"].map(lambda r: CHILE_REGION_COORDS.get(r, (None, None))[1])
+                df_region = df_region.dropna(subset=["lat", "lon"])
+
+                fig_map = px.scatter_geo(
+                    df_region,
+                    lat="lat",
+                    lon="lon",
+                    size=map_word,
+                    color=map_word,
+                    hover_name="geoName",
+                    color_continuous_scale="Inferno",
+                    template=PLOTLY_TEMPLATE,
+                    scope="south america",
+                    size_max=40,
+                )
+                fig_map.update_geos(
+                    center=dict(lat=-35, lon=-71),
+                    projection_scale=4,
+                    showcountries=True,
+                    countrycolor="gray",
+                )
+                fig_map.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig_map, width="stretch")
+
+                with st.expander("Ver tabla completa por región"):
+                    st.dataframe(
+                        df_region[["geoName", map_word]].sort_values(map_word, ascending=False),
+                        width="stretch",
+                        hide_index=True,
+                    )
         except Exception as e:
             st.error(f"No se pudo consultar Google Trends: {e}")

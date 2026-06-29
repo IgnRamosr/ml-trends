@@ -89,3 +89,24 @@ def fetch_rising_queries(pytrends: TrendReq, seed: str, geo: str, timeframe: str
             wait = BASE_DELAY_SECONDS * attempt
             print(f"  [429] Rate limited, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})...")
             time.sleep(wait)
+
+
+# Centroides aproximados (capital regional) para ubicar cada región de Chile
+# en un mapa, ya que Google Trends solo da el nombre de la región, no coordenadas.
+CHILE_REGION_COORDS = {
+    "Región de Arica y Parinacota": (-18.48, -69.50),
+    "Región de Tarapacá": (-20.21, -70.15),
+    "III Región": (-27.37, -70.33),
+    "Región de Antofagasta": (-23.65, -70.40),
+    "Región de Coquimbo": (-29.95, -71.34),
+    "Región de Valparaíso": (-33.05, -71.40),
+    "Región Metropolitana": (-33.45, -70.65),
+    "VI Región": (-34.57, -71.00),
+    "VII Región": (-35.43, -71.66),
+    "Región del Bío Bío": (-36.83, -73.05),
+    "IX Región": (-38.74, -72.60),
+    "Región de los Ríos": (-39.81, -73.25),
+    "X Región": (-41.47, -72.94),
+    "XI Región": (-45.57, -72.07),
+    "Región de Magallanes y de la Antártica Chilena": (-53.16, -70.90),
+}
