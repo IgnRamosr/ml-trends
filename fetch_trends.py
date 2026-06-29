@@ -23,12 +23,19 @@ DB_PATH = "ml_trends.db"
 # Categorías a monitorear (id, nombre). Ver lista completa en
 # https://api.mercadolibre.com/sites/MLC/categories
 CATEGORIES = [
-    ("MLC1648", "Tecnologia"),
-    ("MLC1276", "Deportes y Fitness"),
-    ("MLC1430", "Ropa y Accesorios"),
-    ("MLC1574", "Hogar y Muebles"),
-    ("MLC1051", "Celulares y Telefonos"),
-    ("MLC1000", "Electronica, Audio y Video"),
+    ("MLC1338", "Fitness y Musculacion"),
+    ("MLC1292", "Ciclismo"),
+    ("MLC158310", "Accesorios de Moda"),
+    ("MLC158467", "Poleras"),
+    ("MLC440687", "Ropa Deportiva"),
+    ("MLC1592", "Cocina y Menaje"),
+    ("MLC1631", "Adornos y Decoracion del Hogar"),
+    ("MLC3813", "Accesorios para Celulares"),
+    ("MLC417704", "Smartwatches y Accesorios"),
+    ("MLC1055", "Celulares y Smartphones"),
+    ("MLC1010", "Audio"),
+    ("MLC157767", "Drones y Accesorios"),
+    ("MLC447778", "Accesorios para PC Gaming"),
 ]
 
 

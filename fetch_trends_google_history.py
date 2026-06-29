@@ -19,12 +19,19 @@ GEO = "CL"
 TIMEFRAME = "today 5-y"
 
 CATEGORY_KEYWORDS = {
-    "Tecnologia": "tecnologia",
-    "Deportes y Fitness": "deportes",
-    "Ropa y Accesorios": "ropa",
-    "Hogar y Muebles": "muebles",
-    "Celulares y Telefonos": "celulares",
-    "Electronica, Audio y Video": "electronica",
+    "Fitness y Musculacion": "fitness",
+    "Ciclismo": "bicicleta",
+    "Accesorios de Moda": "accesorios moda",
+    "Poleras": "poleras",
+    "Ropa Deportiva": "ropa deportiva",
+    "Cocina y Menaje": "menaje cocina",
+    "Adornos y Decoracion del Hogar": "decoracion hogar",
+    "Accesorios para Celulares": "accesorios celular",
+    "Smartwatches y Accesorios": "smartwatch",
+    "Celulares y Smartphones": "celulares",
+    "Audio": "audifonos",
+    "Drones y Accesorios": "drones",
+    "Accesorios para PC Gaming": "gaming",
 }
 
 
