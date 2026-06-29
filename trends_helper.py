@@ -91,6 +91,20 @@ def fetch_rising_queries(pytrends: TrendReq, seed: str, geo: str, timeframe: str
             time.sleep(wait)
 
 
+def fetch_region_interest(pytrends: TrendReq, seed: str, geo: str, timeframe: str):
+    """Interés por región para una palabra, con reintentos automáticos por 429."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            pytrends.build_payload([seed], geo=geo, timeframe=timeframe)
+            return pytrends.interest_by_region(resolution="REGION", inc_low_vol=True)
+        except TooManyRequestsError:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = BASE_DELAY_SECONDS * attempt
+            print(f"  [429] Rate limited, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})...")
+            time.sleep(wait)
+
+
 # Centroides aproximados (capital regional) para ubicar cada región de Chile
 # en un mapa, ya que Google Trends solo da el nombre de la región, no coordenadas.
 CHILE_REGION_COORDS = {

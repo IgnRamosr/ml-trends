@@ -6,13 +6,19 @@ Correr con: streamlit run dashboard.py
 """
 
 import sqlite3
+from datetime import date
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from pytrends.request import TrendReq
 
-from trends_helper import CHILE_REGION_COORDS, fetch_comparable_interest, fetch_rising_queries
+from trends_helper import (
+    CHILE_REGION_COORDS,
+    fetch_comparable_interest,
+    fetch_region_interest,
+    fetch_rising_queries,
+)
 
 DB_PATH = "ml_trends.db"
 
@@ -74,6 +80,8 @@ trends_history_df = load_trends_history()
 if ml_df.empty:
     st.warning("Todavía no hay datos. Corre `python fetch_trends.py` primero.")
     st.stop()
+
+_SECCIONES_ANTERIORES_DESHABILITADAS = """
 
 # --- Sección 0: recomendación rápida (cruce de todas las señales) ---
 st.header("0. Qué publicar primero en Facebook Marketplace")
@@ -477,3 +485,183 @@ if map_word and st.button("Ver mapa de calor"):
                     )
         except Exception as e:
             st.error(f"No se pudo consultar Google Trends: {e}")
+
+"""
+
+# =========================================================================
+# Análisis único: ¿conviene publicar este producto en Facebook Marketplace?
+# =========================================================================
+st.title("¿Conviene publicar este producto en Facebook Marketplace?")
+st.caption(
+    "Escribe una palabra de PRODUCTO (no categoría genérica) y se analiza: "
+    "en qué zonas hay más interés, cómo ha fluctuado este año, y cómo se compara "
+    "con el mismo período del año pasado. Al final se entrega una conclusión. "
+    "Recuerda: esto mide interés de búsqueda, no ventas confirmadas. La recomendación "
+    "final es publicar el producto en Facebook Marketplace sin tener stock todavía, "
+    "solo para medir la interacción real (vistas, mensajes) antes de invertir en comprarlo."
+)
+
+analysis_word = st.text_input(
+    "Palabra de producto a analizar",
+    placeholder="ej. zapatillas nike, freidora de aire, audifonos bluetooth",
+    key="analysis_word",
+)
+
+if analysis_word and st.button("Analizar"):
+    today = date.today()
+    today_str = today.isoformat()
+    this_year_start = f"{today.year}-01-01"
+
+    with st.spinner(f"Analizando '{analysis_word}'..."):
+        try:
+            pytrends = TrendReq(hl="es-CL", tz=240)
+
+            df_region = fetch_region_interest(pytrends, analysis_word, "CL", "today 12-m")
+
+            df_this_year = fetch_comparable_interest(
+                pytrends, [analysis_word], "CL", f"{this_year_start} {today_str}"
+            )
+
+            last_year_start = f"{today.year - 1}-01-01"
+            last_year_end = f"{today.year - 1}-{today.month:02d}-{today.day:02d}"
+            df_last_year = fetch_comparable_interest(
+                pytrends, [analysis_word], "CL", f"{last_year_start} {last_year_end}"
+            )
+
+            st.success("Análisis completo")
+
+            st.subheader("1. Zonas con mayor interés")
+            top_region_value = 0
+            top_region_name = None
+            if df_region.empty or df_region[analysis_word].sum() == 0:
+                st.info("Sin suficiente volumen para desglosar por región.")
+            else:
+                df_region = df_region.reset_index()
+                df_region["lat"] = df_region["geoName"].map(lambda r: CHILE_REGION_COORDS.get(r, (None, None))[0])
+                df_region["lon"] = df_region["geoName"].map(lambda r: CHILE_REGION_COORDS.get(r, (None, None))[1])
+                df_region_plot = df_region.dropna(subset=["lat", "lon"])
+
+                fig_map = px.scatter_geo(
+                    df_region_plot,
+                    lat="lat",
+                    lon="lon",
+                    size=analysis_word,
+                    color=analysis_word,
+                    hover_name="geoName",
+                    color_continuous_scale="Inferno",
+                    template=PLOTLY_TEMPLATE,
+                    scope="south america",
+                    size_max=40,
+                )
+                fig_map.update_geos(
+                    center=dict(lat=-35, lon=-71),
+                    projection_scale=4,
+                    showcountries=True,
+                    countrycolor="gray",
+                )
+                fig_map.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig_map, width="stretch")
+
+                top_row = df_region.sort_values(analysis_word, ascending=False).iloc[0]
+                top_region_name = top_row["geoName"]
+                top_region_value = top_row[analysis_word]
+
+            st.divider()
+
+            st.subheader(f"2. Fluctuación durante {today.year}")
+            this_year_avg = 0
+            trend_direction = "sin datos"
+            if df_this_year.empty:
+                st.info("Sin datos suficientes para este año.")
+            else:
+                serie_this_year = df_this_year[analysis_word]
+                fig_this_year = px.line(
+                    df_this_year.reset_index(),
+                    x="date",
+                    y=analysis_word,
+                    markers=True,
+                    template=PLOTLY_TEMPLATE,
+                    color_discrete_sequence=COLOR_SEQUENCE,
+                    line_shape="spline",
+                )
+                fig_this_year.update_yaxes(title="Interés de búsqueda (0-100)", range=[0, 100])
+                fig_this_year.update_xaxes(title="Fecha")
+                fig_this_year.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+                st.plotly_chart(fig_this_year, width="stretch")
+
+                this_year_avg = serie_this_year.mean()
+                n = len(serie_this_year)
+                quarter = max(1, n // 4)
+                start_avg = serie_this_year.iloc[:quarter].mean()
+                end_avg = serie_this_year.iloc[-quarter:].mean()
+                if end_avg > start_avg * 1.15:
+                    trend_direction = "subiendo"
+                elif end_avg < start_avg * 0.85:
+                    trend_direction = "bajando"
+                else:
+                    trend_direction = "estable"
+
+            st.divider()
+
+            st.subheader(f"3. {today.year} vs {today.year - 1} (mismo período: 1-ene a hoy)")
+            last_year_avg = df_last_year[analysis_word].mean() if not df_last_year.empty else 0
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric(f"Promedio {today.year}", f"{this_year_avg:.0f}/100")
+            col2.metric(f"Promedio {today.year - 1}", f"{last_year_avg:.0f}/100")
+            yoy_change = None
+            if last_year_avg > 0:
+                yoy_change = (this_year_avg - last_year_avg) / last_year_avg * 100
+                col3.metric("Variación año contra año", f"{yoy_change:+.0f}%")
+            else:
+                col3.metric("Variación año contra año", "sin base")
+
+            st.divider()
+
+            st.subheader("4. Conclusión")
+
+            points_favor = []
+            points_contra = []
+
+            if trend_direction == "subiendo":
+                points_favor.append("el interés está subiendo dentro de este año")
+            elif trend_direction == "bajando":
+                points_contra.append("el interés está bajando dentro de este año")
+            else:
+                points_favor.append("el interés se mantiene estable este año (no es una moda pasajera de un día)")
+
+            if yoy_change is not None:
+                if yoy_change > 10:
+                    points_favor.append(f"creció un {yoy_change:.0f}% respecto al año pasado")
+                elif yoy_change < -10:
+                    points_contra.append(f"cayó un {abs(yoy_change):.0f}% respecto al año pasado")
+
+            if top_region_value >= 50:
+                points_favor.append(f"hay una zona con interés fuerte ({top_region_name}, {top_region_value:.0f}/100)")
+            elif top_region_name:
+                points_contra.append("el interés más alto por región sigue siendo bajo")
+
+            favorable = len(points_favor) >= 2 and len(points_contra) == 0
+
+            if favorable:
+                st.success(
+                    "Sí parece un buen candidato para probar este mes. A favor: "
+                    + "; ".join(points_favor) + "."
+                )
+            elif points_contra:
+                a_favor_txt = "; ".join(points_favor) if points_favor else "ninguna señal fuerte"
+                st.warning(
+                    "Señales mixtas o débiles, no es un candidato claro ahora. A favor: "
+                    + a_favor_txt + ". En contra: " + "; ".join(points_contra) + "."
+                )
+            else:
+                st.info("Señales insuficientes para concluir con confianza, datos muy bajos en volumen.")
+
+            st.caption(
+                "Esto no es garantía de venta, es interés de búsqueda. El siguiente paso recomendado "
+                "es publicar este producto en Facebook Marketplace sin comprar stock todavía, y "
+                "medir cuántas vistas o mensajes recibe en 1-2 semanas antes de invertir en comprarlo."
+            )
+
+        except Exception as e:
+            st.error(f"No se pudo completar el análisis: {e}")
