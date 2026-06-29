@@ -12,7 +12,7 @@ import plotly.express as px
 import streamlit as st
 from pytrends.request import TrendReq
 
-from trends_helper import fetch_comparable_interest
+from trends_helper import fetch_comparable_interest, fetch_rising_queries
 
 DB_PATH = "ml_trends.db"
 
@@ -328,5 +328,45 @@ if selected_products and st.button("Comparar en Google Trends"):
                 "los títulos completos de Mercado Libre son demasiado específicos para tener "
                 "volumen de búsqueda medible en Google."
             )
+        except Exception as e:
+            st.error(f"No se pudo consultar Google Trends: {e}")
+
+st.divider()
+
+# --- Sección 6: productos/marcas en alza por categoría ---
+st.header("6. Qué productos están ganando interés ahora")
+st.caption(
+    "Búsquedas relacionadas EN ALZA para una palabra semilla (los últimos 3 meses, Chile). "
+    "Esto NO es una predicción del futuro — es la señal más cercana que existe gratis a "
+    "'qué está empezando a moverse ahora', basada en crecimiento real de búsquedas. "
+    "Usa una palabra de PRODUCTO (ej. 'zapatillas', 'audifonos', 'freidora'), no una "
+    "categoría genérica (ej. 'deportes' mezcla resultados de fútbol en Chile)."
+)
+
+seed_word = st.text_input(
+    "Palabra semilla (producto, no categoría genérica)",
+    placeholder="ej. zapatillas, audifonos bluetooth, freidora de aire",
+    key="seed_word",
+)
+
+if seed_word and st.button("Ver productos en alza"):
+    with st.spinner(f"Consultando búsquedas en alza para '{seed_word}'..."):
+        try:
+            pytrends = TrendReq(hl="es-CL", tz=240)
+            rising = fetch_rising_queries(pytrends, seed_word, "CL", "today 3-m")
+
+            if rising is None or rising.empty:
+                st.warning(
+                    "Google Trends no encontró búsquedas relacionadas en alza para esa palabra "
+                    "(puede ser muy específica o tener poco volumen)."
+                )
+            else:
+                rising = rising.rename(columns={"query": "Búsqueda relacionada", "value": "Crecimiento"})
+                st.dataframe(rising, width="stretch", hide_index=True)
+                st.caption(
+                    "'Crecimiento' es un valor relativo de Google (no porcentaje exacto comparable "
+                    "entre palabras distintas) — entre más alto, más rápido está creciendo esa "
+                    "búsqueda específica en los últimos 3 meses."
+                )
         except Exception as e:
             st.error(f"No se pudo consultar Google Trends: {e}")

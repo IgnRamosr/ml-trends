@@ -69,3 +69,23 @@ def fetch_comparable_interest(
         combined = combined.join(rescaled)
 
     return combined
+
+
+def fetch_rising_queries(pytrends: TrendReq, seed: str, geo: str, timeframe: str):
+    """
+    Devuelve el DataFrame de búsquedas relacionadas EN ALZA para una palabra
+    semilla. Es la señal más cercana a "qué productos están ganando interés
+    ahora" que existe gratis: no es una predicción de futuro, es una medida
+    de crecimiento reciente de búsqueda relativa.
+    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            pytrends.build_payload([seed], geo=geo, timeframe=timeframe)
+            related = pytrends.related_queries()
+            return related[seed]["rising"]
+        except TooManyRequestsError:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = BASE_DELAY_SECONDS * attempt
+            print(f"  [429] Rate limited, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})...")
+            time.sleep(wait)
