@@ -11,6 +11,7 @@ valor para reescalar los demás lotes al mismo punto de referencia.
 """
 
 import time
+from datetime import date
 
 from pytrends.exceptions import TooManyRequestsError
 from pytrends.request import TrendReq
@@ -103,6 +104,98 @@ def fetch_region_interest(pytrends: TrendReq, seed: str, geo: str, timeframe: st
             wait = BASE_DELAY_SECONDS * attempt
             print(f"  [429] Rate limited, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})...")
             time.sleep(wait)
+
+
+def analyze_word(pytrends: TrendReq, word: str, geo: str = "CL") -> dict:
+    """
+    Corre el análisis completo de una palabra: interés por región, fluctuación
+    del año actual, comparativa con el mismo período del año pasado, y un
+    veredicto basado en reglas simples (no es un modelo predictivo entrenado).
+
+    Devuelve un dict con los dataframes crudos (para graficar si se quiere)
+    y los campos resumidos (para tablas/comparación entre varias palabras).
+    """
+    today = date.today()
+    today_str = today.isoformat()
+    this_year_start = f"{today.year}-01-01"
+    last_year_start = f"{today.year - 1}-01-01"
+    last_year_end = f"{today.year - 1}-{today.month:02d}-{today.day:02d}"
+
+    df_region = fetch_region_interest(pytrends, word, geo, "today 12-m")
+    df_this_year = fetch_comparable_interest(pytrends, [word], geo, f"{this_year_start} {today_str}")
+    df_last_year = fetch_comparable_interest(pytrends, [word], geo, f"{last_year_start} {last_year_end}")
+
+    top_region_name = None
+    top_region_value = 0
+    if not df_region.empty and df_region[word].sum() > 0:
+        region_sorted = df_region.sort_values(word, ascending=False)
+        top_region_name = region_sorted.index[0]
+        top_region_value = region_sorted.iloc[0][word]
+
+    this_year_avg = 0
+    trend_direction = "sin datos"
+    if not df_this_year.empty:
+        serie = df_this_year[word]
+        this_year_avg = serie.mean()
+        n = len(serie)
+        quarter = max(1, n // 4)
+        start_avg = serie.iloc[:quarter].mean()
+        end_avg = serie.iloc[-quarter:].mean()
+        if end_avg > start_avg * 1.15:
+            trend_direction = "subiendo"
+        elif end_avg < start_avg * 0.85:
+            trend_direction = "bajando"
+        else:
+            trend_direction = "estable"
+
+    last_year_avg = df_last_year[word].mean() if not df_last_year.empty else 0
+    yoy_change = None
+    if last_year_avg > 0:
+        yoy_change = (this_year_avg - last_year_avg) / last_year_avg * 100
+
+    points_favor = []
+    points_contra = []
+
+    if trend_direction == "subiendo":
+        points_favor.append("el interés está subiendo dentro de este año")
+    elif trend_direction == "bajando":
+        points_contra.append("el interés está bajando dentro de este año")
+    elif trend_direction == "estable":
+        points_favor.append("el interés se mantiene estable este año")
+
+    if yoy_change is not None:
+        if yoy_change > 10:
+            points_favor.append(f"creció un {yoy_change:.0f}% respecto al año pasado")
+        elif yoy_change < -10:
+            points_contra.append(f"cayó un {abs(yoy_change):.0f}% respecto al año pasado")
+
+    if top_region_value >= 50:
+        points_favor.append(f"zona fuerte: {top_region_name} ({top_region_value:.0f}/100)")
+    elif top_region_name:
+        points_contra.append("el interés más alto por región sigue siendo bajo")
+
+    if len(points_favor) >= 2 and len(points_contra) == 0:
+        verdict = "favorable"
+    elif points_contra:
+        verdict = "mixto"
+    else:
+        verdict = "insuficiente"
+
+    return {
+        "word": word,
+        "df_region": df_region,
+        "df_this_year": df_this_year,
+        "df_last_year": df_last_year,
+        "this_year_avg": this_year_avg,
+        "last_year_avg": last_year_avg,
+        "yoy_change": yoy_change,
+        "trend_direction": trend_direction,
+        "top_region_name": top_region_name,
+        "top_region_value": top_region_value,
+        "points_favor": points_favor,
+        "points_contra": points_contra,
+        "verdict": verdict,
+    }
 
 
 # Centroides aproximados (capital regional) para ubicar cada región de Chile

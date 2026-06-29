@@ -15,6 +15,7 @@ from pytrends.request import TrendReq
 
 from trends_helper import (
     CHILE_REGION_COORDS,
+    analyze_word,
     fetch_comparable_interest,
     fetch_region_interest,
     fetch_rising_queries,
@@ -509,30 +510,16 @@ analysis_word = st.text_input(
 
 if analysis_word and st.button("Analizar"):
     today = date.today()
-    today_str = today.isoformat()
-    this_year_start = f"{today.year}-01-01"
 
     with st.spinner(f"Analizando '{analysis_word}'..."):
         try:
             pytrends = TrendReq(hl="es-CL", tz=240)
-
-            df_region = fetch_region_interest(pytrends, analysis_word, "CL", "today 12-m")
-
-            df_this_year = fetch_comparable_interest(
-                pytrends, [analysis_word], "CL", f"{this_year_start} {today_str}"
-            )
-
-            last_year_start = f"{today.year - 1}-01-01"
-            last_year_end = f"{today.year - 1}-{today.month:02d}-{today.day:02d}"
-            df_last_year = fetch_comparable_interest(
-                pytrends, [analysis_word], "CL", f"{last_year_start} {last_year_end}"
-            )
+            result = analyze_word(pytrends, analysis_word, geo="CL")
 
             st.success("Análisis completo")
 
             st.subheader("1. Zonas con mayor interés")
-            top_region_value = 0
-            top_region_name = None
+            df_region = result["df_region"]
             if df_region.empty or df_region[analysis_word].sum() == 0:
                 st.info("Sin suficiente volumen para desglosar por región.")
             else:
@@ -562,19 +549,13 @@ if analysis_word and st.button("Analizar"):
                 fig_map.update_layout(margin=dict(l=10, r=10, t=10, b=10))
                 st.plotly_chart(fig_map, width="stretch")
 
-                top_row = df_region.sort_values(analysis_word, ascending=False).iloc[0]
-                top_region_name = top_row["geoName"]
-                top_region_value = top_row[analysis_word]
-
             st.divider()
 
             st.subheader(f"2. Fluctuación durante {today.year}")
-            this_year_avg = 0
-            trend_direction = "sin datos"
+            df_this_year = result["df_this_year"]
             if df_this_year.empty:
                 st.info("Sin datos suficientes para este año.")
             else:
-                serie_this_year = df_this_year[analysis_word]
                 fig_this_year = px.line(
                     df_this_year.reset_index(),
                     x="date",
@@ -589,66 +570,29 @@ if analysis_word and st.button("Analizar"):
                 fig_this_year.update_layout(margin=dict(l=10, r=10, t=10, b=10))
                 st.plotly_chart(fig_this_year, width="stretch")
 
-                this_year_avg = serie_this_year.mean()
-                n = len(serie_this_year)
-                quarter = max(1, n // 4)
-                start_avg = serie_this_year.iloc[:quarter].mean()
-                end_avg = serie_this_year.iloc[-quarter:].mean()
-                if end_avg > start_avg * 1.15:
-                    trend_direction = "subiendo"
-                elif end_avg < start_avg * 0.85:
-                    trend_direction = "bajando"
-                else:
-                    trend_direction = "estable"
-
             st.divider()
 
             st.subheader(f"3. {today.year} vs {today.year - 1} (mismo período: 1-ene a hoy)")
-            last_year_avg = df_last_year[analysis_word].mean() if not df_last_year.empty else 0
-
             col1, col2, col3 = st.columns(3)
-            col1.metric(f"Promedio {today.year}", f"{this_year_avg:.0f}/100")
-            col2.metric(f"Promedio {today.year - 1}", f"{last_year_avg:.0f}/100")
-            yoy_change = None
-            if last_year_avg > 0:
-                yoy_change = (this_year_avg - last_year_avg) / last_year_avg * 100
-                col3.metric("Variación año contra año", f"{yoy_change:+.0f}%")
+            col1.metric(f"Promedio {today.year}", f"{result['this_year_avg']:.0f}/100")
+            col2.metric(f"Promedio {today.year - 1}", f"{result['last_year_avg']:.0f}/100")
+            if result["yoy_change"] is not None:
+                col3.metric("Variación año contra año", f"{result['yoy_change']:+.0f}%")
             else:
                 col3.metric("Variación año contra año", "sin base")
 
             st.divider()
 
             st.subheader("4. Conclusión")
+            points_favor = result["points_favor"]
+            points_contra = result["points_contra"]
 
-            points_favor = []
-            points_contra = []
-
-            if trend_direction == "subiendo":
-                points_favor.append("el interés está subiendo dentro de este año")
-            elif trend_direction == "bajando":
-                points_contra.append("el interés está bajando dentro de este año")
-            else:
-                points_favor.append("el interés se mantiene estable este año (no es una moda pasajera de un día)")
-
-            if yoy_change is not None:
-                if yoy_change > 10:
-                    points_favor.append(f"creció un {yoy_change:.0f}% respecto al año pasado")
-                elif yoy_change < -10:
-                    points_contra.append(f"cayó un {abs(yoy_change):.0f}% respecto al año pasado")
-
-            if top_region_value >= 50:
-                points_favor.append(f"hay una zona con interés fuerte ({top_region_name}, {top_region_value:.0f}/100)")
-            elif top_region_name:
-                points_contra.append("el interés más alto por región sigue siendo bajo")
-
-            favorable = len(points_favor) >= 2 and len(points_contra) == 0
-
-            if favorable:
+            if result["verdict"] == "favorable":
                 st.success(
                     "Sí parece un buen candidato para probar este mes. A favor: "
                     + "; ".join(points_favor) + "."
                 )
-            elif points_contra:
+            elif result["verdict"] == "mixto":
                 a_favor_txt = "; ".join(points_favor) if points_favor else "ninguna señal fuerte"
                 st.warning(
                     "Señales mixtas o débiles, no es un candidato claro ahora. A favor: "
