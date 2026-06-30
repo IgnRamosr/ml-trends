@@ -623,13 +623,23 @@ st.caption(
     "— si algo falla a mitad puedes reanudar desde donde quedó sin re-analizar todo."
 )
 
-with open("productos_template.csv", "rb") as f:
-    st.download_button(
-        label="Descargar plantilla CSV de ejemplo (63 productos)",
-        data=f,
-        file_name="productos_template.csv",
-        mime="text/csv",
-    )
+col_dl1, col_dl2 = st.columns(2)
+with col_dl1:
+    with open("productos_template.csv", "rb") as f:
+        st.download_button(
+            label="Descargar plantilla CSV de ejemplo (63 productos)",
+            data=f,
+            file_name="productos_template.csv",
+            mime="text/csv",
+        )
+with col_dl2:
+    with open("deportes_suplementos.csv", "rb") as f:
+        st.download_button(
+            label="Descargar lista deportes y suplementos (68 productos)",
+            data=f,
+            file_name="deportes_suplementos.csv",
+            mime="text/csv",
+        )
 
 uploaded_file = st.file_uploader(
     "Sube tu CSV de productos (columnas: categoria, producto)",

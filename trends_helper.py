@@ -21,10 +21,20 @@ BASE_DELAY_SECONDS = 30
 
 
 def _fetch_with_retry(pytrends: TrendReq, batch: list[str], geo: str, timeframe: str):
+    import pandas as pd
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             pytrends.build_payload(batch, geo=geo, timeframe=timeframe)
-            return pytrends.interest_over_time()[batch]
+            df = pytrends.interest_over_time()
+            if df.empty:
+                return pd.DataFrame(columns=batch)
+            # Google a veces devuelve el DF sin la columna del keyword cuando
+            # no hay datos suficientes (en vez de devolver un DF vacío).
+            missing = [kw for kw in batch if kw not in df.columns]
+            if missing:
+                for kw in missing:
+                    df[kw] = 0
+            return df[batch]
         except TooManyRequestsError:
             if attempt == MAX_RETRIES:
                 raise
