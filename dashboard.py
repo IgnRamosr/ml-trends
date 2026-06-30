@@ -609,3 +609,111 @@ if analysis_word and st.button("Analizar"):
 
         except Exception as e:
             st.error(f"No se pudo completar el análisis: {e}")
+
+st.divider()
+
+# =========================================================================
+# Análisis por lote: subir CSV y obtener veredicto para varios productos
+# =========================================================================
+st.header("Análisis por lote — subir tu lista de productos")
+st.caption(
+    "Sube un CSV con columnas 'categoria' y 'producto' para analizar varios candidatos "
+    "a la vez y descargar el resultado. Para listas grandes (+20 productos) es mejor "
+    "usar el script batch_analyze.py desde la terminal, ya que el análisis aquí puede "
+    "tardar varios minutos y requiere una conexión estable."
+)
+
+with open("productos_template.csv", "rb") as f:
+    st.download_button(
+        label="Descargar plantilla CSV de ejemplo (63 productos)",
+        data=f,
+        file_name="productos_template.csv",
+        mime="text/csv",
+    )
+
+uploaded_file = st.file_uploader(
+    "Sube tu CSV de productos (columnas: categoria, producto)",
+    type=["csv"],
+    key="batch_upload",
+)
+
+if uploaded_file is not None:
+    df_input = pd.read_csv(uploaded_file)
+
+    if not {"categoria", "producto"}.issubset(df_input.columns):
+        st.error("El CSV debe tener columnas 'categoria' y 'producto'.")
+    else:
+        st.write(f"**{len(df_input)} productos cargados:**")
+        st.dataframe(df_input, width="stretch", hide_index=True)
+
+        max_products = 15
+        if len(df_input) > max_products:
+            st.warning(
+                f"Lista muy larga ({len(df_input)} productos). Se analizarán solo los primeros "
+                f"{max_products} para evitar timeouts. Para listas completas usa batch_analyze.py "
+                "en la terminal."
+            )
+            df_input = df_input.head(max_products)
+
+        if st.button("Analizar todos", key="batch_run"):
+            results = []
+            progress = st.progress(0, text="Iniciando análisis...")
+            pytrends = TrendReq(hl="es-CL", tz=240)
+
+            for i, row in df_input.iterrows():
+                word = str(row["producto"])
+                cat = str(row["categoria"])
+                progress.progress(
+                    (list(df_input.index).index(i) + 1) / len(df_input),
+                    text=f"Analizando '{word}'...",
+                )
+                try:
+                    result = analyze_word(pytrends, word, geo="CL")
+                    results.append({
+                        "categoria": cat,
+                        "producto": word,
+                        "interes_este_anio": round(result["this_year_avg"]),
+                        "interes_anio_pasado": round(result["last_year_avg"]),
+                        "variacion_%": f"{result['yoy_change']:+.0f}%" if result["yoy_change"] is not None else "sin base",
+                        "tendencia": result["trend_direction"],
+                        "zona_top": result["top_region_name"],
+                        "veredicto": result["verdict"],
+                        "a_favor": "; ".join(result["points_favor"]),
+                        "en_contra": "; ".join(result["points_contra"]),
+                    })
+                except Exception as e:
+                    results.append({
+                        "categoria": cat,
+                        "producto": word,
+                        "interes_este_anio": None,
+                        "interes_anio_pasado": None,
+                        "variacion_%": None,
+                        "tendencia": None,
+                        "zona_top": None,
+                        "veredicto": "error",
+                        "a_favor": "",
+                        "en_contra": str(e),
+                    })
+                import time
+                time.sleep(8)
+
+            progress.empty()
+
+            df_results = pd.DataFrame(results).sort_values(
+                ["veredicto", "interes_este_anio"], ascending=[True, False]
+            )
+
+            st.subheader("Resultados")
+            favorable = df_results[df_results["veredicto"] == "favorable"]
+            if not favorable.empty:
+                st.success(f"{len(favorable)} candidatos favorables: {', '.join(favorable['producto'].tolist())}")
+
+            st.dataframe(df_results, width="stretch", hide_index=True)
+
+            csv_bytes = df_results.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                label="Descargar resultados CSV",
+                data=csv_bytes,
+                file_name="batch_resultados.csv",
+                mime="text/csv",
+            )
