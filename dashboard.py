@@ -617,10 +617,10 @@ st.divider()
 # =========================================================================
 st.header("Análisis por lote — subir tu lista de productos")
 st.caption(
-    "Sube un CSV con columnas 'categoria' y 'producto' para analizar varios candidatos "
-    "a la vez y descargar el resultado. Para listas grandes (+20 productos) es mejor "
-    "usar el script batch_analyze.py desde la terminal, ya que el análisis aquí puede "
-    "tardar varios minutos y requiere una conexión estable."
+    "Sube un CSV con columnas 'categoria' y 'producto'. Se analizan TODOS los productos "
+    "sin límite: la tabla se actualiza en vivo después de cada uno manteniendo la conexión "
+    "activa aunque tarde 20-30 minutos. Cada resultado se guarda a disco inmediatamente "
+    "— si algo falla a mitad puedes reanudar desde donde quedó sin re-analizar todo."
 )
 
 with open("productos_template.csv", "rb") as f:
@@ -637,8 +637,15 @@ uploaded_file = st.file_uploader(
     key="batch_upload",
 )
 
+CHECKPOINT_PATH = "batch_checkpoint.csv"
+
 if uploaded_file is not None:
-    df_input = pd.read_csv(uploaded_file)
+    import hashlib
+    import time as _time
+
+    raw_bytes = uploaded_file.read()
+    file_hash = hashlib.md5(raw_bytes).hexdigest()[:8]
+    df_input = pd.read_csv(pd.io.common.BytesIO(raw_bytes)).reset_index(drop=True)
 
     if not {"categoria", "producto"}.issubset(df_input.columns):
         st.error("El CSV debe tener columnas 'categoria' y 'producto'.")
@@ -646,40 +653,90 @@ if uploaded_file is not None:
         st.write(f"**{len(df_input)} productos cargados:**")
         st.dataframe(df_input, width="stretch", hide_index=True)
 
-        max_products = 15
-        if len(df_input) > max_products:
-            st.warning(
-                f"Lista muy larga ({len(df_input)} productos). Se analizarán solo los primeros "
-                f"{max_products} para evitar timeouts. Para listas completas usa batch_analyze.py "
-                "en la terminal."
+        # Cargar checkpoint de una corrida anterior del mismo archivo
+        already_done = []
+        try:
+            ck = pd.read_csv(CHECKPOINT_PATH)
+            if "_file_hash" in ck.columns and str(ck["_file_hash"].iloc[0]) == file_hash:
+                already_done = ck.drop(columns=["_file_hash"]).to_dict("records")
+        except Exception:
+            pass
+
+        done_products = {r["producto"] for r in already_done}
+        pending = df_input[~df_input["producto"].isin(done_products)]
+
+        if already_done:
+            st.info(
+                f"Análisis previo encontrado: {len(already_done)}/{len(df_input)} productos "
+                "ya listos. Puedes reanudar o empezar desde cero."
             )
-            df_input = df_input.head(max_products)
+            col_a, col_b = st.columns(2)
+            do_resume = col_a.button("Reanudar", key="batch_resume")
+            do_restart = col_b.button("Empezar desde cero", key="batch_restart")
+        else:
+            do_resume = st.button("Analizar todos", key="batch_run")
+            do_restart = False
 
-        if st.button("Analizar todos", key="batch_run"):
-            results = []
-            progress = st.progress(0, text="Iniciando análisis...")
+        if do_restart:
+            already_done = []
+            pending = df_input
+            try:
+                import os; os.remove(CHECKPOINT_PATH)
+            except Exception:
+                pass
+
+        if do_resume or do_restart:
+            results = list(already_done)
             pytrends = TrendReq(hl="es-CL", tz=240)
+            progress_bar = st.progress(
+                len(results) / len(df_input),
+                text=f"Completados {len(results)}/{len(df_input)}",
+            )
+            table_slot = st.empty()
+            dl_slot = st.empty()
 
-            for i, row in df_input.iterrows():
+            def _render(rows):
+                if not rows:
+                    return
+                df_r = pd.DataFrame(rows).sort_values(
+                    ["veredicto", "interes_este_anio"], ascending=[True, False]
+                )
+                fav = df_r[df_r["veredicto"] == "favorable"]["producto"].tolist()
+                if fav:
+                    table_slot.success(
+                        f"{len(fav)} candidatos favorables hasta ahora: " + ", ".join(fav)
+                    )
+                table_slot.dataframe(df_r, width="stretch", hide_index=True)
+                dl_slot.download_button(
+                    label=f"Descargar resultados parciales ({len(rows)} productos)",
+                    data=df_r.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+                    file_name="batch_resultados.csv",
+                    mime="text/csv",
+                    key=f"dl_{len(rows)}",
+                )
+
+            _render(results)
+
+            for _, row in pending.iterrows():
                 word = str(row["producto"])
                 cat = str(row["categoria"])
-                progress.progress(
-                    (list(df_input.index).index(i) + 1) / len(df_input),
-                    text=f"Analizando '{word}'...",
+                progress_bar.progress(
+                    len(results) / len(df_input),
+                    text=f"[{len(results)+1}/{len(df_input)}] Analizando '{word}'...",
                 )
                 try:
-                    result = analyze_word(pytrends, word, geo="CL")
+                    res = analyze_word(pytrends, word, geo="CL")
                     results.append({
                         "categoria": cat,
                         "producto": word,
-                        "interes_este_anio": round(result["this_year_avg"]),
-                        "interes_anio_pasado": round(result["last_year_avg"]),
-                        "variacion_%": f"{result['yoy_change']:+.0f}%" if result["yoy_change"] is not None else "sin base",
-                        "tendencia": result["trend_direction"],
-                        "zona_top": result["top_region_name"],
-                        "veredicto": result["verdict"],
-                        "a_favor": "; ".join(result["points_favor"]),
-                        "en_contra": "; ".join(result["points_contra"]),
+                        "interes_este_anio": round(res["this_year_avg"]),
+                        "interes_anio_pasado": round(res["last_year_avg"]),
+                        "variacion_%": f"{res['yoy_change']:+.0f}%" if res["yoy_change"] is not None else "sin base",
+                        "tendencia": res["trend_direction"],
+                        "zona_top": res["top_region_name"],
+                        "veredicto": res["verdict"],
+                        "a_favor": "; ".join(res["points_favor"]),
+                        "en_contra": "; ".join(res["points_contra"]),
                     })
                 except Exception as e:
                     results.append({
@@ -694,26 +751,14 @@ if uploaded_file is not None:
                         "a_favor": "",
                         "en_contra": str(e),
                     })
-                import time
-                time.sleep(8)
 
-            progress.empty()
+                # Guardar checkpoint después de cada producto
+                ck_df = pd.DataFrame(results)
+                ck_df["_file_hash"] = file_hash
+                ck_df.to_csv(CHECKPOINT_PATH, index=False, encoding="utf-8-sig")
 
-            df_results = pd.DataFrame(results).sort_values(
-                ["veredicto", "interes_este_anio"], ascending=[True, False]
-            )
+                _render(results)
+                _time.sleep(8)
 
-            st.subheader("Resultados")
-            favorable = df_results[df_results["veredicto"] == "favorable"]
-            if not favorable.empty:
-                st.success(f"{len(favorable)} candidatos favorables: {', '.join(favorable['producto'].tolist())}")
-
-            st.dataframe(df_results, width="stretch", hide_index=True)
-
-            csv_bytes = df_results.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-            st.download_button(
-                label="Descargar resultados CSV",
-                data=csv_bytes,
-                file_name="batch_resultados.csv",
-                mime="text/csv",
-            )
+            progress_bar.progress(1.0, text=f"Completado — {len(results)} productos analizados.")
+            st.balloons()
